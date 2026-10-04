@@ -1,0 +1,11 @@
+{
+  "name": "hotel-details-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for hotel deals via SerpApi Google Hotels",
+  "private": true,
+  "scripts": {
+    "dev": "node --env-file=.env.local server.js",
+    "test": "node --env-file=.env.local test.js"
+  },
+  "engines": { "node": ">=20" }
+}
