@@ -1,5 +1,5 @@
 // Stateless MCP server (Streamable HTTP, JSON responses) for Vercel.
-const { searchHotels } = require("./hotels");
+const { searchHotels, getHotelDetails, getHotelPhotos, getHotelReviews } = require("./hotels");
 
 const PROTOCOL_VERSION = "2025-03-26";
 const SERVER_INFO = { name: "hotel-details-mcp", version: "1.0.0" };
@@ -29,6 +29,18 @@ const props = {
 
 const required = ["query", "check_in_date", "check_out_date"];
 
+const propertyProps = {
+  property_token: {
+    type: "string",
+    description: "property_token of the hotel, from search_hotels / find_hotel_deals results",
+  },
+  query: { type: "string", description: "The same destination or hotel name used in the search" },
+  check_in_date: props.check_in_date,
+  check_out_date: props.check_out_date,
+  adults: props.adults,
+};
+const propertyRequired = ["property_token", "query", "check_in_date", "check_out_date"];
+
 const TOOLS = [
   {
     name: "find_hotel_deals",
@@ -54,15 +66,58 @@ const TOOLS = [
     },
     handler: (a) => searchHotels(a),
   },
+  {
+    name: "get_hotel_details",
+    description:
+      "Get full details for one hotel: description, address, phone, amenities, check-in/out times, nearby places, ratings and prices from booking sites (INR). Needs the property_token returned by search_hotels or find_hotel_deals.",
+    inputSchema: { type: "object", properties: propertyProps, required: propertyRequired },
+    handler: (a) => getHotelDetails(a),
+  },
+  {
+    name: "get_hotel_photos",
+    description:
+      "Get photo URLs (thumbnail and original) for one hotel. Needs the property_token returned by search_hotels or find_hotel_deals.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...propertyProps,
+        limit: { type: "integer", description: "Max photos to return (1-50, default 10)" },
+      },
+      required: propertyRequired,
+    },
+    handler: (a) => getHotelPhotos(a),
+  },
+  {
+    name: "get_hotel_reviews",
+    description:
+      "Get guest reviews for one hotel (author, rating, date, text) plus the rating breakdown. Needs the property_token returned by search_hotels or find_hotel_deals. Use next_page_token from a previous call to get more.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        property_token: propertyProps.property_token,
+        sort_by: {
+          type: "integer",
+          description: "1 = Most helpful, 2 = Most recent, 3 = Highest score, 4 = Lowest score",
+        },
+        limit: { type: "integer", description: "Max reviews to return (1-20, default 10)" },
+        next_page_token: { type: "string", description: "Token from a previous call for the next page" },
+      },
+      required: ["property_token"],
+    },
+    handler: (a) => getHotelReviews(a),
+  },
 ];
 
-function validate(args) {
-  const missing = required.filter((k) => !args[k]);
+function validate(args, tool) {
+  const req = tool.inputSchema.required || [];
+  const missing = req.filter((k) => !args[k]);
   if (missing.length) return `Missing required argument(s): ${missing.join(", ")}`;
-  for (const k of ["check_in_date", "check_out_date"]) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(args[k])) return `${k} must be YYYY-MM-DD`;
+  if (req.includes("check_in_date")) {
+    for (const k of ["check_in_date", "check_out_date"]) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(args[k])) return `${k} must be YYYY-MM-DD`;
+    }
+    if (args.check_out_date <= args.check_in_date) return "check_out_date must be after check_in_date";
   }
-  if (args.check_out_date <= args.check_in_date) return "check_out_date must be after check_in_date";
   return null;
 }
 
@@ -86,7 +141,7 @@ async function handleRpc(msg) {
       const tool = TOOLS.find((t) => t.name === params?.name);
       if (!tool) return err(-32602, `Unknown tool: ${params?.name}`);
       const args = params.arguments || {};
-      const problem = validate(args);
+      const problem = validate(args, tool);
       if (problem) return ok({ isError: true, content: [{ type: "text", text: problem }] });
       try {
         const result = await tool.handler(args);
